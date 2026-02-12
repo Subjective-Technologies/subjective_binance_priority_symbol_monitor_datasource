@@ -1,4 +1,5 @@
 {
+  "description": "Streams realtime ticks for a priority symbol list (from parameters or local file) for focused high-priority monitoring.",
   "domainCategory": "Trading",
   "subjectiveTechnologyElement": "DataSources",
   "publisher": "BrainBoost Ltd.",
@@ -9,7 +10,7 @@
     {
       "type": "splitList",
       "title": "Priority Symbol Monitor",
-      "text": "Subjective datasource implementation for SubjectivePrioritySymbolMonitorDataSource.",
+      "text": "Streams realtime ticks for a priority symbol list (from parameters or local file) for focused high-priority monitoring.",
       "image": {
         "src": "/subjective_binance_priority_symbol_monitor_datasource/icon.svg",
         "alt": "Priority Symbol Monitor icon"
