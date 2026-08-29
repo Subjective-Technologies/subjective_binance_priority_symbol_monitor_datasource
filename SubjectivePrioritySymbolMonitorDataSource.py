@@ -1,39 +1,63 @@
-import time
-from subjective_abstract_data_source_package.SubjectiveDataSource import SubjectiveDataSource
-from brainboost_data_source_logger_package.BBLogger import BBLogger
+import sys
+from collections import defaultdict, deque
+from decimal import Decimal
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from subjective_abstract_data_source_package import SubjectiveDataSource
+
+from trading_contracts.plugin_support import icon_for, symbols_from, ticker_stream
 
 
 class SubjectivePrioritySymbolMonitorDataSource(SubjectiveDataSource):
-    connection_type = "PriorityMonitor"
-    connection_fields = ["symbols", "interval", "priority_threshold"]
-    icon_svg = "<svg width='24' height='24' viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'><circle cx='12' cy='12' r='9' fill='#2d6a4f'/><path d='M7 12h10' stroke='#ffffff' stroke-width='2'/></svg>"
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.symbols = symbols_from(self._connection.get("symbols"))
+        self.window = max(1, int(self._connection.get("window", 20)))
+        self._windows = defaultdict(lambda: deque(maxlen=self.window))
 
-    def get_icon(self):
-        return self.icon_svg
+    @classmethod
+    def connection_schema(cls):
+        return {
+            "symbols": {"type": "textarea", "label": "Priority Symbols", "required": True},
+            "window": {"type": "int", "label": "Window", "default": 20, "min": 1},
+        }
 
-    def get_connection_data(self):
-        return {"connection_type": self.connection_type, "fields": list(self.connection_fields)}
+    @classmethod
+    def request_schema(cls):
+        return {"events": {"type": "array", "label": "Market Events"}, "symbols": {"type": "array", "label": "Priority Symbols"}}
 
-    def _get_param(self, key, default=None):
-        return self.params.get(key, default)
+    @classmethod
+    def output_schema(cls):
+        return {
+            "event": {"type": "object", "label": "Market Event"},
+            "priority": {"type": "int", "label": "Priority"},
+            "sequence": {"type": "array", "label": "Price Sequence"},
+            "sma": {"type": "text", "label": "SMA"},
+            "error": {"type": "text", "label": "Error"},
+        }
 
-    def start(self):
-        from com_goldenthinker_trade_datasource_network.TickerSocketMultipleSymbols import TickerSocketMultipleSymbols
-        from com_goldenthinker_trade_exchange.ExchangeConfiguration import ExchangeConfiguration
+    @classmethod
+    def icon(cls):
+        return icon_for(__file__)
 
-        symbols = self._get_param("symbols")
-        if not symbols:
-            with open("priority_symbols.list", "r", encoding="utf-8") as handle:
-                raw = handle.read().replace("\n", "")
-            symbols = [s.strip() for s in raw.split(",") if s.strip()]
-        if not symbols:
-            raise ValueError("symbols are required for priority symbol monitoring")
-        ticker = TickerSocketMultipleSymbols(exchange=ExchangeConfiguration.get_default_exchange(), symbols=symbols)
-        ticker.start()
+    def supports_streaming(self):
+        return True
 
-    def fetch(self):
-        if self.status_callback:
-            self.status_callback(self.get_name(), "stream_started")
-        self.start()
-        self.set_fetch_completed(True)
-        BBLogger.log(f"Stream started for {self.get_name()}")
+    def stream(self, request):
+        symbols = symbols_from((request or {}).get("symbols")) or self.symbols
+        for event in ticker_stream(request or {}, {**self._connection, "symbols": symbols}, "multiple"):
+            if event.get("event") is None and event.get("error"):
+                yield {"event": None, "priority": -1, "sequence": [], "sma": "", "error": event["error"]}
+                continue
+            values = self._windows[event["symbol"]]
+            values.append(event["last"])
+            sma = format(sum(Decimal(value) for value in values) / len(values), "f") if len(values) >= self.window else ""
+            yield {"event": event, "priority": symbols.index(event["symbol"]), "sequence": list(values), "sma": sma, "error": ""}
+
+    def run(self, request):
+        result = {"event": None, "priority": -1, "sequence": [], "sma": "", "error": ""}
+        for result in self.stream(request or {}):
+            pass
+        return result
